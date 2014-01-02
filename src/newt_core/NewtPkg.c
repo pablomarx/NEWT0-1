@@ -85,6 +85,7 @@ typedef struct {
 typedef struct {
 	uint8_t		pkg_version;	///< rw corrsponds to the last charof the signature
 	uint8_t *	data;			///< rw package data
+  uint32_t  dataOffset;
 	uint32_t	size;			///< rw size of package
 	uint32_t	data_size;		///< w  size of data block
 	pkg_header_t *header;		///< r  pointer to the package header
@@ -129,6 +130,7 @@ static newtRef	PkgWriteObject(pkg_stream_t *pkg, newtRefArg obj);
 static void		PkgWritePart(pkg_stream_t *pkg, newtRefArg part);
 
 static uint32_t	PkgReadU32(uint8_t *d) ;
+static uint8_t *PkgReadDataAtOffset(pkg_stream_t *pkg, uint32_t offset);
 static newtRef	PkgPartGetInstance(pkg_stream_t *pkg, uint32_t p_obj);
 static void		PkgPartSetInstance(pkg_stream_t *pkg, uint32_t p_obj, newtRefArg r);
 static newtRef	PkgReadRef(pkg_stream_t *pkg, uint32_t p_obj);
@@ -711,7 +713,17 @@ newtRef NewtWritePkg(newtRefArg package)
  *
  * @retval	uint32 assembled from four bytes
  */
-uint32_t PkgReadU32(uint8_t *d) 
+uint8_t * PkgReadDataAtOffset(pkg_stream_t *pkg, uint32_t offset)
+{
+  uint32_t localOffset = (offset - pkg->dataOffset);
+  if (localOffset > pkg->size) {
+    printf("Something very bad is happening!\n");
+    return NULL;
+  }
+  return pkg->data + localOffset;
+}
+
+uint32_t PkgReadU32(uint8_t *d)
 {
 	return ((d[0]<<24)|(d[1]<<16)|(d[2]<<8)|(d[3]));
 }
@@ -753,7 +765,7 @@ void PkgPartSetInstance(pkg_stream_t *pkg, uint32_t p_obj, newtRefArg r)
  */
 newtRef PkgReadRef(pkg_stream_t *pkg, uint32_t p_obj)
 {
-	uint32_t ref = PkgReadU32(pkg->data + p_obj);
+	uint32_t ref = PkgReadU32(PkgReadDataAtOffset(pkg, p_obj));
 	newtRef result = kNewtRefNIL;
 
 	switch (ref&3) {
@@ -787,16 +799,16 @@ newtRef PkgReadRef(pkg_stream_t *pkg, uint32_t p_obj)
  */
 newtRef PkgReadBinaryObject(pkg_stream_t *pkg, uint32_t p_obj)
 {
-	uint32_t size = PkgReadU32(pkg->data + p_obj) >> 8;
+	uint32_t size = PkgReadU32(PkgReadDataAtOffset(pkg, p_obj)) >> 8;
 	newtRef klass, result = kNewtRefNIL;
 	newtRef ins = NSSYM0(instructions);
 
 	klass = PkgReadRef(pkg, p_obj+8);
 
 	if (klass==kNewtSymbolClass) {
-		result = NewtMakeSymbol(pkg->data + p_obj + 16);
+		result = NewtMakeSymbol(PkgReadDataAtOffset(pkg, p_obj + 16));
 	} else if (klass==NSSYM0(string)) {
-		char *src = pkg->data + p_obj + 12;
+		char *src = PkgReadDataAtOffset(pkg, p_obj + 12);
 		int sze = size-12;
 #		ifdef HAVE_LIBICONV
 			size_t buflen;
@@ -808,23 +820,23 @@ newtRef PkgReadBinaryObject(pkg_stream_t *pkg, uint32_t p_obj)
 		if (result==kNewtRefNIL)
 			result = NewtMakeString2(src, sze, true);
 	} else if (klass==NSSYM0(int32)) {
-		uint32_t v = PkgReadU32(pkg->data + p_obj + 12);
+		uint32_t v = PkgReadU32(PkgReadDataAtOffset(pkg, p_obj + 12));
 		result = NewtMakeInt32(v);
 	} else if (klass==NSSYM0(real)) {
-		double *v = (double*)(pkg->data + p_obj + 12);
+		double *v = (double*)(PkgReadDataAtOffset(pkg, + p_obj + 12));
 		result = NewtMakeReal(ntohd(*v));
 	} else if (klass==NSSYM0(instructions)) {
-		result = NewtMakeBinary(klass, pkg->data + p_obj + 12, size-12, true);
+		result = NewtMakeBinary(klass, PkgReadDataAtOffset(pkg, p_obj + 12), size-12, true);
 #		ifdef DEBUG_PKG_DIS
 			printf("*** PkgReader: PkgReadBinaryObject - dumping byte code\n");
 			NVMDumpBC(stdout, result);
 #		endif
-	} else if (klass==NSSYM0(bits)) {
-		result = NewtMakeBinary(klass, pkg->data + p_obj + 12, size-12, true);
+	} else if (klass==NSSYM0(bits) || klass==NSSYM(pattern) || klass==NSSYM(mask) || klass==NSSYM(picture) || klass==NSSYM(sfnt)) {
+		result = NewtMakeBinary(klass, PkgReadDataAtOffset(pkg, p_obj + 12), size-12, true);
 	} else if (klass==NSSYM0(cbits)) {
-		result = NewtMakeBinary(klass, pkg->data + p_obj + 12, size-12, true);
+		result = NewtMakeBinary(klass, PkgReadDataAtOffset(pkg, p_obj + 12), size-12, true);
 	} else if (klass==NSSYM0(nativeModule)) {
-		result = NewtMakeBinary(klass, pkg->data + p_obj + 12, size-12, true);
+		result = NewtMakeBinary(klass, PkgReadDataAtOffset(pkg, p_obj + 12), size-12, true);
 	} else {
 #		ifdef DEBUG_PKG
 			// This output is helpful to find more binary classes that may need 
@@ -834,7 +846,7 @@ newtRef PkgReadBinaryObject(pkg_stream_t *pkg, uint32_t p_obj)
 				NewtPrintObject(stdout, klass);
 			}
 #		endif
-		result = NewtMakeBinary(klass, pkg->data + p_obj + 12, size-12, true);
+		result = NewtMakeBinary(klass, PkgReadDataAtOffset(pkg, p_obj + 12), size-12, true);
 	}
 
 	return result;
@@ -850,7 +862,7 @@ newtRef PkgReadBinaryObject(pkg_stream_t *pkg, uint32_t p_obj)
  */
 newtRef PkgReadArrayObject(pkg_stream_t *pkg, uint32_t p_obj)
 {
-	uint32_t size = PkgReadU32(pkg->data + p_obj) >> 8;
+	uint32_t size = PkgReadU32(PkgReadDataAtOffset(pkg, p_obj)) >> 8;
 	uint32_t num_slots = size/4 - 3;
 	uint32_t i;
 	newtRef array, klass;
@@ -878,7 +890,7 @@ newtRef PkgReadArrayObject(pkg_stream_t *pkg, uint32_t p_obj)
  */
 newtRef PkgReadFrameObject(pkg_stream_t *pkg, uint32_t p_obj)
 {
-	uint32_t size = PkgReadU32(pkg->data + p_obj) >> 8;
+	uint32_t size = PkgReadU32(PkgReadDataAtOffset(pkg, p_obj)) >> 8;
 	uint32_t i, num_slots = size/4 - 3;
 	newtRef frame = kNewtRefNIL, map;
 
@@ -907,7 +919,7 @@ newtRef PkgReadFrameObject(pkg_stream_t *pkg, uint32_t p_obj)
  */
 newtRef PkgReadObject(pkg_stream_t *pkg, uint32_t p_obj)
 {
-	uint32_t obj = PkgReadU32(pkg->data + p_obj);
+	uint32_t obj = PkgReadU32(PkgReadDataAtOffset(pkg, p_obj));
 	newtRef ret = PkgPartGetInstance(pkg, p_obj);
 
 	// avoid generating objects twice
@@ -917,15 +929,19 @@ newtRef PkgReadObject(pkg_stream_t *pkg, uint32_t p_obj)
 	// create an object based on its low 8 bit type
 	switch (obj & 0xff) {
 	case 0x40: // binary object
+  case 0xc0: // binary object
 		ret = PkgReadBinaryObject(pkg, p_obj);
 		break;
-	case 0x40 | kObjSlotted: // array
+  case 0x40 | kObjSlotted: // array
+  case 0xc0 | kObjSlotted: // array
 		ret = PkgReadArrayObject(pkg, p_obj);
 		break;
-	case 0x40 | kObjSlotted | kObjFrame: // frame
+  case 0x40 | kObjSlotted | kObjFrame: // frame
+  case 0xc0 | kObjSlotted | kObjFrame: // frame
 		ret = PkgReadFrameObject(pkg, p_obj);
 		break;
-	case 0x40 | kObjFrame: // not defined
+  case 0x40 | kObjFrame: // not defined
+  case 0xc0 | kObjFrame: // not defined
 	default:
 #		ifdef DEBUG_PKG
 			printf("*** PkgReader: PkgReadObject - unsupported object 0x%08x\n", obj);
@@ -1139,6 +1155,11 @@ newtRef PkgReadHeader(pkg_stream_t *pkg)
  */
 newtRef NewtReadPkg(uint8_t * data, size_t size)
 {
+  return NewtReadPkgWithOffset(data, 0, size);
+}
+
+newtRef NewtReadPkgWithOffset(uint8_t * data, size_t offset, size_t size)
+{
 	pkg_stream_t	pkg;
 	newtRef			result;
 
@@ -1151,6 +1172,7 @@ newtRef NewtReadPkg(uint8_t * data, size_t size)
 	memset(&pkg, 0, sizeof(pkg));
 	pkg.pkg_version = data[7]-'0';
 	pkg.data = data;
+  pkg.dataOffset = offset;
 	pkg.size = size;
 	pkg.header = (pkg_header_t*)data;
 	pkg.num_parts = ntohl(pkg.header->numParts);

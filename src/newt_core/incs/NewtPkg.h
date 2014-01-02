@@ -22,6 +22,7 @@ extern "C" {
 
 
 newtRef		NewtReadPkg(uint8_t * data, size_t size);
+newtRef		NewtReadPkgWithOffset(uint8_t * data, size_t offset, size_t size);
 newtRef		NewtWritePkg(newtRefArg pkg);
 
 newtRef		NsReadPkg(newtRefArg rcvr, newtRefArg r);
