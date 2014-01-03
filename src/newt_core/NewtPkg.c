@@ -738,7 +738,7 @@ uint32_t PkgReadU32(uint8_t *d)
  */
 newtRef PkgPartGetInstance(pkg_stream_t *pkg, uint32_t p_obj)
 {
-	uint32_t ix = (p_obj - pkg->part_offset) / 4;
+	uint32_t ix = (p_obj - pkg->dataOffset - pkg->part_offset) / 4;
 	return NewtGetArraySlot(pkg->instances, ix);
 }
 
@@ -751,7 +751,7 @@ newtRef PkgPartGetInstance(pkg_stream_t *pkg, uint32_t p_obj)
  */
 void PkgPartSetInstance(pkg_stream_t *pkg, uint32_t p_obj, newtRefArg r)
 {
-	uint32_t ix = (p_obj - pkg->part_offset) / 4;
+	uint32_t ix = (p_obj - pkg->dataOffset - pkg->part_offset) / 4;
 	NewtSetArraySlot(pkg->instances, ix, r);
 }
 
@@ -849,6 +849,9 @@ newtRef PkgReadBinaryObject(pkg_stream_t *pkg, uint32_t p_obj)
 		result = NewtMakeBinary(klass, PkgReadDataAtOffset(pkg, p_obj + 12), size-12, true);
 	}
 
+	// remember that we created this object
+	PkgPartSetInstance(pkg, p_obj, result);
+  
 	return result;
 }
 
@@ -871,7 +874,10 @@ newtRef PkgReadArrayObject(pkg_stream_t *pkg, uint32_t p_obj)
 	array = NewtMakeArray(klass, num_slots);
 
 	if (NewtRefIsNotNIL(array)) {
-		for (i=0; i<num_slots; i++) {
+    // remember that we created this object
+    PkgPartSetInstance(pkg, p_obj, array);
+    
+    for (i=0; i<num_slots; i++) {
 			NewtSetArraySlot(array, i, PkgReadRef(pkg, p_obj+12 + 4*i));
 		}
 	}
@@ -899,6 +905,9 @@ newtRef PkgReadFrameObject(pkg_stream_t *pkg, uint32_t p_obj)
 	frame = NewtMakeFrame(map, num_slots);
 
 	if (NewtRefIsNotNIL(frame)) {
+    // remember that we created this object
+    PkgPartSetInstance(pkg, p_obj, frame);
+    
 
         newtRef *slot = NewtRefToSlots(frame);
 		for (i=0; i<num_slots; i++) {
@@ -948,9 +957,6 @@ newtRef PkgReadObject(pkg_stream_t *pkg, uint32_t p_obj)
 #		endif
 		break;
 	}
-
-	// remember that we created this object
-	PkgPartSetInstance(pkg, p_obj, ret);
 
 	return ret;
 }
